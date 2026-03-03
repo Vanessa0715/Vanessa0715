@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>小老虎墊款記帳助手</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts: Noto Sans TC & Fredoka (for numbers/English) -->
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+    <!-- SheetJS (for Excel export) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'morandi-bg': '#F4F1ED',    /* 米灰背景 */
+                        'morandi-card': '#FFFFFF',
+                        'morandi-primary': '#D8A47F', /* 溫暖的橘棕（小老虎色） */
+                        'morandi-primary-dark': '#C68B5F',
+                        'morandi-secondary': '#A4B4A9', /* 灰綠色 */
+                        'morandi-accent': '#E2C2B3',  /* 粉膚色 */
+                        'morandi-text': '#5A5A5A',    /* 柔和深灰 */
+                        'morandi-light': '#EAE6E1',
+                    },
+                    fontFamily: {
+                        'sans': ['Noto Sans TC', 'sans-serif'],
+                        'num': ['Fredoka', 'sans-serif'],
+                    },
+                    boxShadow: {
+                        'soft': '0 4px 20px -2px rgba(0, 0, 0, 0.05)',
+                        'floating': '0 -10px 40px -5px rgba(0, 0, 0, 0.1)',
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body {
+            background-color: theme('colors.morandi-bg');
+            color: theme('colors.morandi-text');
+            -webkit-tap-highlight-color: transparent; /* 移除手機點擊閃爍 */
+        }
+        
+        /* 隱藏滾動條但保持可滾動 */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        /* 輸入框通用樣式 */
+        .input-style {
+            @apply w-full bg-morandi-bg border-none rounded-xl p-3 text-morandi-text focus:ring-2 focus:ring-morandi-primary outline-none transition-all;
+        }
+
+        /* 按鈕通用樣式 */
+        .btn-primary {
+            @apply bg-morandi-primary text-white font-medium rounded-xl p-3 shadow-soft hover:bg-morandi-primary-dark transition-colors active:scale-95;
+        }
+
+        /* 計算機按鈕樣式 */
+        .calc-btn {
+            @apply bg-morandi-bg text-morandi-text text-xl font-num font-semibold rounded-xl p-4 shadow-sm active:scale-95 active:bg-morandi-light transition-all flex items-center justify-center;
+        }
+        .calc-btn-op {
+            @apply bg-morandi-accent text-morandi-text text-xl font-num font-semibold rounded-xl p-4 shadow-sm active:scale-95 transition-all flex items-center justify-center;
+        }
+
+        /* 彈窗動畫 */
+        @keyframes slideUp {
+            from { transform: translateY(100%); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        .modal-animate {
+            animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+    </style>
+</head>
+<body class="font-sans antialiased h-screen flex flex-col overflow-hidden selection:bg-morandi-primary selection:text-white">
+
+    <!-- 背景裝飾 -->
+    <div class="fixed top-[-50px] right-[-50px] w-40 h-40 bg-morandi-accent rounded-full opacity-30 z-0 pointer-events-none"></div>
+    <div class="fixed bottom-[10%] left-[-20px] w-24 h-24 bg-morandi-secondary rounded-full opacity-20 z-0 pointer-events-none"></div>
+    
+    <!-- 頂部導航 -->
+    <header class="bg-morandi-card shadow-sm z-10 relative px-6 py-4 flex justify-between items-center rounded-b-3xl">
+        <div class="flex items-center gap-2">
+            <div class="w-10 h-10 bg-morandi-primary rounded-full flex items-center justify-center text-white text-xl shadow-soft relative overflow-hidden">
+                <i class="fa-solid fa-cat"></i> <!-- 假裝是小老虎 -->
+            </div>
+            <div>
+                <h1 class="font-bold text-lg text-morandi-text">Tiger Account</h1>
+                <p class="text-xs text-gray-400">墊款記帳小幫手</p>
+            </div>
+        </div>
+        <button onclick="openSettingsModal()" class="w-10 h-10 rounded-full bg-morandi-bg flex items-center justify-center text-morandi-text hover:bg-morandi-light transition-colors">
+            <i class="fa-solid fa-gear"></i>
+        </button>
+    </header>
+
+    <!-- 主要內容區 (記帳表單) -->
+    <main class="flex-1 overflow-y-auto no-scrollbar p-5 pb-24 z-10 relative space-y-6" id="main-content">
+        
+        <section class="bg-morandi-card rounded-3xl p-5 shadow-soft">
+            <h2 class="font-bold text-morandi-text mb-4 flex items-center gap-2">
+                <i class="fa-solid fa-pen-to-square text-morandi-primary"></i> 新增紀錄
+            </h2>
+            
+            <form id="record-form" class="space-y-4" onsubmit="saveRecord(event)">
+                
+                <!-- 類型 (墊款/請款/還款) -->
+                <div class="flex bg-morandi-bg p-1 rounded-xl">
+                    <label class="flex-1 text-center cursor-pointer">
+                        <input type="radio" name="type" value="墊款" class="peer hidden" checked>
+                        <div class="py-2 rounded-lg peer-checked:bg-white peer-checked:shadow-sm peer-checked:text-morandi-primary font-medium text-gray-400 transition-all">墊款 (出)</div>
+                    </label>
+                    <label class="flex-1 text-center cursor-pointer">
+                        <input type="radio" name="type" value="請款" class="peer hidden">
+                        <div class="py-2 rounded-lg peer-checked:bg-white peer-checked:shadow-sm peer-checked:text-morandi-secondary font-medium text-gray-400 transition-all">請款 (入)</div>
+                    </label>
+                    <label class="flex-1 text-center cursor-pointer">
+                        <input type="radio" name="type" value="還款" class="peer hidden">
+                        <div class="py-2 rounded-lg peer-checked:bg-white peer-checked:shadow-sm peer-checked:text-morandi-text font-medium text-gray-400 transition-all">還款 (入)</div>
+                    </label>
+                </div>
+
+                <!-- 金額與日期 (為適配手機，改為 flex-col sm:flex-row) -->
+                <div class="flex flex-col sm:flex-row gap-3">
+                    <div class="w-full relative flex items-center">
+                        <span class="absolute left-3 text-gray-400 font-num z-10">$</span>
+                        <input type="number" id="amount" required step="any" min="0" placeholder="0" class="input-style pl-8 pr-12 font-num text-xl font-semibold bg-white border-2 border-morandi-light focus:border-morandi-primary focus:bg-white" inputmode="decimal">
+                        <!-- 呼叫計算機的按鈕 -->
+                        <button type="button" onclick="openCalculator()" class="absolute right-2 text-morandi-primary hover:bg-morandi-bg p-2 rounded-lg transition-colors z-10">
+                            <i class="fa-solid fa-calculator text-lg"></i>
+                        </button>
+                    </div>
+                    <div class="w-full">
+                        <input type="date" id="date" required class="input-style text-sm h-full w-full">
+                    </div>
+                </div>
+
+                <!-- 銀行帳戶 -->
+                <div>
+                    <select id="bank-account" class="input-style text-sm appearance-none bg-white border-2 border-morandi-bg" required>
+                        <!-- 動態載入 -->
+                    </select>
+                </div>
+
+                <!-- 類別與廠商 -->
+                <div class="flex gap-3 items-start">
+                    <div class="flex-1 flex flex-col gap-2">
+                        <select id="category" class="input-style text-sm appearance-none bg-white border-2 border-morandi-bg" required onchange="toggleCustomCategory()">
+                            <option value="鑰匙">🔑 鑰匙</option>
+                            <option value="水費">💧 水費</option>
+                            <option value="電費">⚡ 電費</option>
+                            <option value="瓦斯">🔥 瓦斯</option>
+                            <option value="修繕">🔧 修繕 (水電/油漆)</option>
+                            <option value="家電">📺 家電 (洗衣機等)</option>
+                            <option value="清潔">🧹 清潔費</option>
+                            <option value="押金">💰 押金/租金</option>
+                            <option value="其他">📝 其他</option>
+                        </select>
+                        <input type="text" id="custom-category" placeholder="請輸入類別" class="input-style text-sm bg-white border-2 border-morandi-bg hidden">
+                    </div>
+                    <div class="flex-1 flex flex-col gap-1.5">
+                        <input type="text" id="vendor" placeholder="廠商" class="input-style text-sm bg-white border-2 border-morandi-bg">
+                        <!-- 廠商快捷選取按鈕 -->
+                        <div id="top-vendors" class="flex flex-wrap gap-1 min-h-[20px]">
+                            <!-- 動態載入 -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 備註 -->
+                <div>
+                    <input type="text" id="note" placeholder="備註" class="input-style text-sm bg-white border-2 border-morandi-bg">
+                </div>
+
+                <!-- 照片上傳 -->
+                <div class="border-2 border-dashed border-morandi-primary/50 bg-morandi-primary/5 rounded-xl p-4 text-center relative overflow-hidden group">
+                    <input type="file" id="photo-upload" accept="image/*" capture="environment" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" onchange="handlePhotoUpload(event)">
+                    
+                    <div id="photo-preview-container" class="hidden relative">
+                        <img id="photo-preview" src="" alt="預覽" class="max-h-32 mx-auto rounded-lg object-contain border border-gray-200">
+                        <button type="button" onclick="clearPhoto(event)" class="absolute -top-2 -right-2 bg-red-500 text-white w-7 h-7 rounded-full z-20 shadow-md text-xs flex items-center justify-center hover:bg-red-600"><i class="fa-solid fa-xmark"></i></button>
+                    </div>
+                    
+                    <div id="photo-placeholder" class="text-morandi-text">
+                        <i class="fa-solid fa-camera text-2xl mb-2 text-morandi-primary"></i>
+                        <p class="text-sm font-medium">點擊拍照或上傳單據</p>
+                    </div>
+                </div>
+
+                <!-- 隱藏的 Canvas 用於壓縮圖片 -->
+                <canvas id="compress-canvas" class="hidden"></canvas>
+                <input type="hidden" id="photo-base64" value="">
+
+                <button type="submit" class="w-full btn-primary text-lg mt-2">
+                    <i class="fa-solid fa-check mr-2"></i> 儲存紀錄
+                </button>
+            </form>
+        </section>
+
+    </main>
+
+    <!-- 底部導航 Bar -->
+    <nav class="fixed bottom-0 w-full bg-morandi-card border-t border-morandi-light pb-safe shadow-[0_-4px_20px_-5px_rgba(0,0,0,0.05)] z-20">
+        <div class="flex justify-around items-center p-2 h-16">
+            <button onclick="switchTab('home')" id="tab-home" class="flex flex-col items-center justify-center w-16 text-morandi-primary transition-colors">
+                <i class="fa-solid fa-pen-to-square text-xl mb-1"></i>
+                <span class="text-[10px] font-medium">記帳</span>
+            </button>
+            <button onclick="switchTab('list')" id="tab-list" class="flex flex-col items-center justify-center w-16 text-gray-400 hover:text-morandi-secondary transition-colors">
+                <i class="fa-solid fa-list text-xl mb-1"></i>
+                <span class="text-[10px] font-medium">明細</span>
+            </button>
+        </div>
+    </nav>
+
+    <!-- ===== 計算機 Modal ===== -->
+    <div id="calc-modal" class="fixed inset-0 bg-black/40 z-50 hidden flex flex-col justify-end transition-opacity" onclick="closeCalculator(event)">
+        <div class="bg-morandi-card w-full rounded-t-3xl shadow-floating modal-animate flex flex-col" onclick="event.stopPropagation()">
+            
+            <div class="p-5 border-b border-morandi-light flex justify-between items-end bg-morandi-bg rounded-t-3xl">
+                <div>
+                    <div class="text-xs text-gray-400 font-num h-4 mb-1" id="calc-expression"></div>
+                    <div class="text-3xl font-bold font-num text-morandi-text" id="calc-display">0</div>
+                </div>
+                <button onclick="applyCalcResult()" class="bg-morandi-primary text-white px-4 py-2 rounded-xl font-medium shadow-sm hover:bg-morandi-primary-dark transition-colors active:scale-95">
+                    完成
+                </button>
+            </div>
+
+            <div class="p-5 grid grid-cols-4 gap-3 bg-white pb-safe">
+                <button class="calc-btn-op" onclick="calcInput('C')">C</button>
+                <button class="calc-btn-op" onclick="calcInput('DEL')"><i class="fa-solid fa-delete-left"></i></button>
+                <button class="calc-btn-op" onclick="calcInput('/')">÷</button>
+                <button class="calc-btn-op" onclick="calcInput('*')">×</button>
+                
+                <button class="calc-btn" onclick="calcInput('7')">7</button>
+                <button class="calc-btn" onclick="calcInput('8')">8</button>
+                <button class="calc-btn" onclick="calcInput('9')">9</button>
+                <button class="calc-btn-op" onclick="calcInput('-')">-</button>
+                
+                <button class="calc-btn" onclick="calcInput('4')">4</button>
+                <button class="calc-btn" onclick="calcInput('5')">5</button>
+                <button class="calc-btn" onclick="calcInput('6')">6</button>
+                <button class="calc-btn-op" onclick="calcInput('+')">+</button>
+                
+                <button class="calc-btn" onclick="calcInput('1')">1</button>
+                <button class="calc-btn" onclick="calcInput('2')">2</button>
+                <button class="calc-btn" onclick="calcInput('3')">3</button>
+                <button class="bg-morandi-secondary text-white text-2xl font-num font-semibold rounded-xl shadow-sm active:scale-95 transition-all flex items-center justify-center row-span-2" onclick="calcInput('=')">=</button>
+                
+                <button class="calc-btn col-span-2" onclick="calcInput('0')">0</button>
+                <button class="calc-btn" onclick="calcInput('.')">.</button>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- ===== 明細與匯出頁面 (全螢幕 Modal) ===== -->
+    <div id="list-modal" class="fixed inset-0 bg-morandi-bg z-10 hidden flex flex-col modal-animate pb-16">
+        <header class="bg-morandi-card shadow-sm px-6 py-4 flex justify-between items-center rounded-b-3xl">
+            <h2 class="font-bold text-lg text-morandi-text">帳務明細</h2>
+            <button onclick="exportExcel()" class="bg-morandi-secondary text-white px-4 py-1.5 rounded-xl text-sm font-medium shadow-soft hover:opacity-90 active:scale-95">
+                <i class="fa-solid fa-file-excel mr-1"></i> 匯出
+            </button>
+        </header>
+
+        <!-- 查詢過濾區 -->
+        <div class="px-5 py-4">
+            <div class="bg-white p-3 rounded-2xl shadow-sm flex flex-col gap-2">
+                <div class="flex gap-2 items-center">
+                    <input type="date" id="filter-start" class="input-style py-2 text-xs flex-1 border-2 border-morandi-bg">
+                    <span class="text-gray-400 text-xs">至</span>
+                    <input type="date" id="filter-end" class="input-style py-2 text-xs flex-1 border-2 border-morandi-bg">
+                </div>
+                <div class="flex gap-2 items-center">
+                    <select id="filter-bank" class="input-style py-2 text-xs flex-1 border-2 border-morandi-bg appearance-none bg-white">
+                        <option value="">🏦 所有帳戶</option>
+                        <!-- 動態載入 -->
+                    </select>
+                    <button onclick="renderList()" class="bg-morandi-primary text-white p-2 rounded-xl flex items-center justify-center shadow-soft active:scale-95 w-10 h-10 shrink-0">
+                        <i class="fa-solid fa-magnifying-glass"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex-1 overflow-y-auto px-5 pb-5 space-y-3 no-scrollbar" id="records-list">
+            <!-- 列表動態生成 -->
+        </div>
+    </div>
+
+    <!-- ===== 圖片查看 Modal ===== -->
+    <div id="image-modal" class="fixed inset-0 bg-black/90 z-50 hidden flex items-center justify-center p-4 backdrop-blur-sm" onclick="closeImageModal()">
+        <img id="full-image" src="" class="max-w-full max-h-[90vh] rounded-lg object-contain shadow-2xl" onclick="event.stopPropagation()">
+        <button class="absolute top-6 right-6 text-white bg-white/20 hover:bg-white/40 rounded-full w-10 h-10 flex items-center justify-center backdrop-blur-md transition-all" onclick="closeImageModal()"><i class="fa-solid fa-xmark text-xl"></i></button>
+    </div>
+
+    <!-- ===== 設定 Modal (銀行帳戶) ===== -->
+    <div id="settings-modal" class="fixed inset-0 bg-black/50 z-40 hidden flex items-end sm:items-center justify-center transition-opacity" onclick="closeSettingsModal(event)">
+        <div class="bg-morandi-card w-full sm:w-[400px] rounded-t-3xl sm:rounded-3xl p-6 modal-animate max-h-[80vh] overflow-y-auto no-scrollbar pb-safe" onclick="event.stopPropagation()">
+            <div class="flex justify-between items-center mb-5">
+                <h3 class="font-bold text-lg text-morandi-text">帳戶設定</h3>
+                <button onclick="closeSettingsModal(null, true)" class="w-8 h-8 flex items-center justify-center rounded-full bg-morandi-bg text-gray-500 hover:text-gray-700"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+
+            <div class="space-y-6">
+                <!-- 銀行帳戶管理 -->
+                <div>
+                    <label class="block text-sm text-gray-500 mb-2 font-medium">墊款銀行 / 現金 列表</label>
+                    <div class="flex gap-2 mb-3">
+                        <input type="text" id="new-bank-name" placeholder="輸入新增名稱 (例: 台新 Richart)" class="input-style text-sm flex-1 border-2 border-morandi-bg bg-white">
+                        <button onclick="addBank()" class="bg-morandi-primary text-white px-4 rounded-xl shadow-soft active:scale-95"><i class="fa-solid fa-plus"></i></button>
+                    </div>
+                    <ul id="bank-list-setting" class="space-y-2 max-h-48 overflow-y-auto no-scrollbar pr-1">
+                        <!-- 動態生成 -->
+                    </ul>
+                </div>
+            </div>
+            
+            <button onclick="closeSettingsModal(null, true)" class="w-full btn-primary mt-6">完成</button>
+        </div>
+    </div>
+
+    <script>
+        // --- 狀態與初始化 ---
+        let records = JSON.parse(localStorage.getItem('tiger_records')) || [];
+        let banks = JSON.parse(localStorage.getItem('tiger_banks')) || ['玉山銀行', '台新銀行', '中信銀行', '現金'];
+
+        // 計算機狀態
+        let calcCurrentVal = '0';
+        let calcExpr = '';
+        let calcIsEvaluated = false;
+
+        document.addEventListener('DOMContentLoaded', () => {
+            // 設定今日日期
+            document.getElementById('date').valueAsDate = new Date();
+            
+            // 初始化查詢日期 (預設近 30 天)
+            const today = new Date();
+            const past30Days = new Date(today);
+            past30Days.setDate(today.getDate() - 30);
+            
+            document.getElementById('filter-start').valueAsDate = past30Days;
+            document.getElementById('filter-end').valueAsDate = today;
+
+            updateBankSelect();
+            updateTopVendors();
+        });
+
+        // --- 類別與廠商輔助功能 ---
+        function toggleCustomCategory() {
+            const category = document.getElementById('category').value;
+            const customCategory = document.getElementById('custom-category');
+            if (category === '其他') {
+                customCategory.classList.remove('hidden');
+                customCategory.required = true;
+            } else {
+                customCategory.classList.add('hidden');
+                customCategory.required = false;
+            }
+        }
+
+        function updateTopVendors() {
+            const vendorCounts = {};
+            records.forEach(r => {
+                if (r.vendor && r.vendor.trim() !== '') {
+                    vendorCounts[r.vendor.trim()] = (vendorCounts[r.vendor.trim()] || 0) + 1;
+                }
+            });
+            // 取出前 3 常用的廠商
+            const topVendors = Object.entries(vendorCounts)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 3)
+                .map(entry => entry[0]);
+
+            const container = document.getElementById('top-vendors');
+            container.innerHTML = '';
+            
+            topVendors.forEach(v => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'text-[10px] bg-morandi-light text-morandi-text px-2 py-0.5 rounded-md whitespace-nowrap active:scale-95 transition-all hover:bg-morandi-primary hover:text-white shadow-sm';
+                btn.innerText = v;
+                btn.onclick = () => {
+                    document.getElementById('vendor').value = v;
+                };
+                container.appendChild(btn);
+            });
+        }
+
+        // --- UI 切換邏輯 ---
+        function switchTab(tab) {
+            const homeBtn = document.getElementById('tab-home');
+            const listBtn = document.getElementById('tab-list');
+            const listModal = document.getElementById('list-modal');
+
+            if (tab === 'home') {
+                homeBtn.classList.replace('text-gray-400', 'text-morandi-primary');
+                homeBtn.classList.remove('hover:text-morandi-secondary');
+                listBtn.classList.replace('text-morandi-primary', 'text-gray-400');
+                listBtn.classList.add('hover:text-morandi-secondary');
+                listModal.classList.add('hidden');
+            } else {
+                listBtn.classList.replace('text-gray-400', 'text-morandi-primary');
+                listBtn.classList.remove('hover:text-morandi-secondary');
+                homeBtn.classList.replace('text-morandi-primary', 'text-gray-400');
+                homeBtn.classList.add('hover:text-morandi-secondary');
+                listModal.classList.remove('hidden');
+                renderList();
+            }
+        }
+
+        // --- 自訂計算機邏輯 ---
+        function openCalculator() {
+            const currentAmount = document.getElementById('amount').value;
+            calcCurrentVal = currentAmount || '0';
+            calcExpr = '';
+            calcIsEvaluated = false;
+            updateCalcDisplay();
+            document.getElementById('calc-modal').classList.remove('hidden');
+        }
+
+        function closeCalculator(event) {
+            if (event && event.target.id === 'calc-modal') {
+                document.getElementById('calc-modal').classList.add('hidden');
+            } else if (!event) {
+                document.getElementById('calc-modal').classList.add('hidden');
+            }
+        }
+
+        function updateCalcDisplay() {
+            document.getElementById('calc-display').innerText = calcCurrentVal;
+            document.getElementById('calc-expression').innerText = calcExpr;
+        }
+
+        function calcInput(key) {
+            if (key === 'C') {
+                calcCurrentVal = '0';
+                calcExpr = '';
+                calcIsEvaluated = false;
+            } else if (key === 'DEL') {
+                if (calcIsEvaluated) {
+                    calcExpr = '';
+                    calcIsEvaluated = false;
+                }
+                calcCurrentVal = calcCurrentVal.length > 1 ? calcCurrentVal.slice(0, -1) : '0';
+            } else if (key === '=') {
+                try {
+                    // 將最後輸入的值加入表達式
+                    let fullExpr = calcExpr + calcCurrentVal;
+                    // 防止空表達式或結尾是運算符號
+                    if(fullExpr === '' || /[+\-*/]$/.test(fullExpr)) return;
+                    
+                    const result = new Function('return ' + fullExpr)();
+                    if(isFinite(result)) {
+                        calcExpr = fullExpr + ' =';
+                        // 處理小數點精度問題，最多留兩位
+                        calcCurrentVal = String(Math.round(result * 100) / 100);
+                        calcIsEvaluated = true;
+                    }
+                } catch(e) {
+                    calcCurrentVal = 'Error';
+                    calcIsEvaluated = true;
+                }
+            } else if (['+', '-', '*', '/'].includes(key)) {
+                if (calcIsEvaluated) {
+                    calcExpr = calcCurrentVal + ' ' + key + ' ';
+                    calcCurrentVal = '0';
+                    calcIsEvaluated = false;
+                } else {
+                    calcExpr += calcCurrentVal + ' ' + key + ' ';
+                    calcCurrentVal = '0';
+                }
+            } else { // 數字或小數點
+                if (calcIsEvaluated) {
+                    calcCurrentVal = key === '.' ? '0.' : key;
+                    calcExpr = '';
+                    calcIsEvaluated = false;
+                } else {
+                    if (key === '.' && calcCurrentVal.includes('.')) return;
+                    if (calcCurrentVal === '0' && key !== '.') {
+                        calcCurrentVal = key;
+                    } else {
+                        calcCurrentVal += key;
+                    }
+                }
+            }
+            updateCalcDisplay();
+        }
+
+        function applyCalcResult() {
+            // 如果還沒按等於，幫他算完
+            if (!calcIsEvaluated && calcExpr !== '') {
+                calcInput('=');
+            }
+            if (calcCurrentVal !== 'Error') {
+                document.getElementById('amount').value = calcCurrentVal;
+            }
+            closeCalculator();
+        }
+
+        // --- 照片處理 (Canvas 壓縮轉 Base64) ---
+        function handlePhotoUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const img = new Image();
+                img.onload = function() {
+                    const canvas = document.getElementById('compress-canvas');
+                    const ctx = canvas.getContext('2d');
+
+                    // 設定最大寬高進行壓縮
+                    const MAX_WIDTH = 800;
+                    const MAX_HEIGHT = 800;
+                    let width = img.width;
+                    let height = img.height;
+
+                    if (width > height) {
+                        if (width > MAX_WIDTH) {
+                            height *= MAX_WIDTH / width;
+                            width = MAX_WIDTH;
+                        }
+                    } else {
+                        if (height > MAX_HEIGHT) {
+                            width *= MAX_HEIGHT / height;
+                            height = MAX_HEIGHT;
+                        }
+                    }
+
+                    canvas.width = width;
+                    canvas.height = height;
+                    ctx.drawImage(img, 0, 0, width, height);
+
+                    // 轉成壓縮後的 base64，品質 0.6
+                    const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
+                    
+                    document.getElementById('photo-base64').value = dataUrl;
+                    document.getElementById('photo-preview').src = dataUrl;
+                    
+                    document.getElementById('photo-placeholder').classList.add('hidden');
+                    document.getElementById('photo-preview-container').classList.remove('hidden');
+                }
+                img.src = e.target.result;
+            }
+            reader.readAsDataURL(file);
+        }
+
+        function clearPhoto(event) {
+            if(event) event.preventDefault();
+            document.getElementById('photo-upload').value = '';
+            document.getElementById('photo-base64').value = '';
+            document.getElementById('photo-preview').src = '';
+            
+            document.getElementById('photo-preview-container').classList.add('hidden');
+            document.getElementById('photo-placeholder').classList.remove('hidden');
+        }
+
+        // --- 記帳資料存取 ---
+        function saveRecord(event) {
+            event.preventDefault();
+            
+            const type = document.querySelector('input[name="type"]:checked').value;
+            const amount = document.getElementById('amount').value;
+            const date = document.getElementById('date').value;
+            const bank = document.getElementById('bank-account').value;
+            const vendor = document.getElementById('vendor').value.trim();
+            const note = document.getElementById('note').value.trim();
+            const photo = document.getElementById('photo-base64').value;
+
+            // 處理類別
+            let finalCategory = document.getElementById('category').value;
+            if (finalCategory === '其他') {
+                finalCategory = document.getElementById('custom-category').value.trim();
+                if (!finalCategory) {
+                    showMessage('請輸入自訂類別');
+                    return;
+                }
+            }
+
+            if (!amount || amount <= 0 || !date || !bank) {
+                showMessage('請確認金額及必填欄位');
+                return;
+            }
+
+            const record = {
+                id: Date.now().toString(),
+                type,
+                amount: parseFloat(amount),
+                date,
+                bank,
+                category: finalCategory,
+                vendor,
+                note,
+                photo,
+                timestamp: new Date().toISOString()
+            };
+
+            try {
+                records.push(record);
+                // 依照日期排序，新的在前
+                records.sort((a, b) => new Date(b.date) - new Date(a.date));
+                localStorage.setItem('tiger_records', JSON.stringify(records));
+
+                showMessage('📝 儲存成功！');
+                
+                // 表單重置 (保留日期、銀行、下拉類別以方便連續輸入)
+                document.getElementById('amount').value = '';
+                document.getElementById('vendor').value = '';
+                document.getElementById('note').value = '';
+                if(document.getElementById('category').value === '其他') {
+                    document.getElementById('custom-category').value = '';
+                }
+                clearPhoto();
+                
+                // 更新廠商快捷按鈕
+                updateTopVendors();
+            } catch (e) {
+                // 如果 LocalStorage 滿了會跑這裡
+                records.pop(); // 把剛才沒存進去的踢掉
+                console.error("儲存失敗:", e);
+                alert('⚠️ 儲存失敗！可能是因為照片太多導致瀏覽器空間滿了，請嘗試清除舊紀錄或減少照片。');
+            }
+        }
+
+        // --- 列表渲染 ---
+        function renderList() {
+            const listContainer = document.getElementById('records-list');
+            listContainer.innerHTML = '';
+
+            const startDate = document.getElementById('filter-start').value;
+            const endDate = document.getElementById('filter-end').value;
+            const filterBank = document.getElementById('filter-bank').value;
+
+            const filteredRecords = records.filter(record => {
+                // 銀行帳戶篩選
+                if (filterBank && record.bank !== filterBank) return false;
+                
+                // 日期篩選
+                if (!startDate && !endDate) return true;
+                const recDate = record.date;
+                if (startDate && recDate < startDate) return false;
+                if (endDate && recDate > endDate) return false;
+                return true;
+            });
+
+            if (filteredRecords.length === 0) {
+                listContainer.innerHTML = `
+                    <div class="text-center py-16 text-gray-400">
+                        <i class="fa-solid fa-cat text-4xl mb-4 opacity-30"></i>
+                        <p class="text-sm">這個條件下還沒有紀錄喔</p>
+                    </div>`;
+                return;
+            }
+
+            let totalOut = 0;
+            let totalIn = 0;
+
+            filteredRecords.forEach(record => {
+                if(record.type === '墊款') totalOut += record.amount;
+                else totalIn += record.amount;
+
+                const colorClass = record.type === '墊款' ? 'text-morandi-primary' : 'text-morandi-secondary';
+                const sign = record.type === '墊款' ? '-' : '+';
+                
+                // 照片圖示
+                const photoIcon = record.photo ? 
+                    `<button onclick="viewImage('${record.photo}')" class="text-morandi-secondary hover:bg-morandi-secondary hover:text-white bg-morandi-bg w-8 h-8 rounded-full flex items-center justify-center transition-colors"><i class="fa-solid fa-image text-sm"></i></button>` : '';
+
+                // 處理展示文字: 類別 - 廠商 (備註)
+                let detailText = record.category;
+                if (record.vendor) detailText += ` <span class="text-morandi-text font-normal">- ${record.vendor}</span>`;
+                if (record.note) detailText += ` <span class="text-gray-400 font-normal ml-1">(${record.note})</span>`;
+
+                const el = document.createElement('div');
+                el.className = 'bg-white p-4 rounded-2xl shadow-sm flex items-center justify-between border-l-4 ' + (record.type === '墊款' ? 'border-morandi-primary' : 'border-morandi-secondary');
+                el.innerHTML = `
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2 mb-1.5">
+                            <span class="text-[10px] bg-morandi-bg px-2 py-0.5 rounded-full text-gray-500">${record.date}</span>
+                            <span class="text-[10px] ${record.type === '墊款' ? 'bg-morandi-primary/10 text-morandi-primary' : 'bg-morandi-secondary/10 text-morandi-secondary'} px-2 py-0.5 rounded-full font-bold">${record.type}</span>
+                        </div>
+                        <div class="font-bold text-morandi-text truncate text-sm">${detailText}</div>
+                        <div class="text-[11px] text-gray-400 mt-1"><i class="fa-solid fa-building-columns mr-1"></i>${record.bank}</div>
+                    </div>
+                    <div class="flex flex-col items-end gap-2 pl-2">
+                        <div class="font-num font-bold text-lg ${colorClass}">${sign}$${record.amount.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 2})}</div>
+                        <div class="flex gap-2">
+                            ${photoIcon}
+                            <button onclick="deleteRecord('${record.id}')" class="text-gray-300 hover:text-red-500 hover:bg-red-50 w-8 h-8 rounded-full flex items-center justify-center transition-colors"><i class="fa-solid fa-trash-can text-sm"></i></button>
+                        </div>
+                    </div>
+                `;
+                listContainer.appendChild(el);
+            });
+
+            // 統計卡片
+            const statEl = document.createElement('div');
+            statEl.className = 'bg-morandi-card p-4 rounded-2xl shadow-soft mb-5 border border-morandi-light flex justify-between items-center';
+            statEl.innerHTML = `
+                <div class="text-center flex-1">
+                    <p class="text-[10px] text-gray-400 mb-1">總墊款 (出)</p>
+                    <p class="font-num font-bold text-morandi-primary text-lg">$${totalOut.toLocaleString(undefined, {maximumFractionDigits: 0})}</p>
+                </div>
+                <div class="w-px h-8 bg-morandi-light"></div>
+                <div class="text-center flex-1">
+                    <p class="text-[10px] text-gray-400 mb-1">總收回 (入)</p>
+                    <p class="font-num font-bold text-morandi-secondary text-lg">$${totalIn.toLocaleString(undefined, {maximumFractionDigits: 0})}</p>
+                </div>
+                <div class="w-px h-8 bg-morandi-light"></div>
+                <div class="text-center flex-1">
+                    <p class="text-[10px] text-gray-400 mb-1">目前未結餘額</p>
+                    <p class="font-num font-bold text-morandi-text text-lg">$${(totalOut - totalIn).toLocaleString(undefined, {maximumFractionDigits: 0})}</p>
+                </div>
+            `;
+            listContainer.insertBefore(statEl, listContainer.firstChild);
+        }
+
+        function deleteRecord(id) {
+            if(confirm('確定要刪除這筆紀錄嗎？這無法復原喔！')) {
+                records = records.filter(r => r.id !== id);
+                localStorage.setItem('tiger_records', JSON.stringify(records));
+                renderList();
+                updateTopVendors(); // 刪除後更新快捷按鈕
+            }
+        }
+
+        // --- 匯出 Excel ---
+        function exportExcel() {
+            const startDate = document.getElementById('filter-start').value;
+            const endDate = document.getElementById('filter-end').value;
+            const filterBank = document.getElementById('filter-bank').value;
+
+            const filteredRecords = records.filter(record => {
+                if (filterBank && record.bank !== filterBank) return false;
+
+                if (!startDate && !endDate) return true;
+                const recDate = record.date;
+                if (startDate && recDate < startDate) return false;
+                if (endDate && recDate > endDate) return false;
+                return true;
+            });
+
+            if (filteredRecords.length === 0) {
+                showMessage('這個條件下沒有資料可以匯出喔');
+                return;
+            }
+
+            // 準備匯出資料格式
+            const exportData = filteredRecords.map(r => ({
+                '日期': r.date,
+                '類型': r.type,
+                '銀行帳戶': r.bank,
+                '類別': r.category,
+                '廠商': r.vendor || '',
+                '備註': r.note || '',
+                '金額': r.amount,
+                '有無附件單據': r.photo ? '是' : '否'
+            }));
+
+            // 使用 SheetJS
+            const ws = XLSX.utils.json_to_sheet(exportData);
+            
+            // 設定欄寬
+            const wscols = [
+                {wch: 12}, {wch: 8}, {wch: 15}, {wch: 15}, {wch: 15}, {wch: 20}, {wch: 12}, {wch: 12}
+            ];
+            ws['!cols'] = wscols;
+
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "墊款明細");
+            
+            const bankName = filterBank ? `_${filterBank}` : '';
+            const fileName = `墊款明細${bankName}_${startDate || 'All'}至${endDate || 'All'}.xlsx`;
+            XLSX.writeFile(wb, fileName);
+            showMessage('📥 匯出成功！');
+        }
+
+        // --- 設定 (銀行帳戶) ---
+        function updateBankSelect() {
+            const select = document.getElementById('bank-account');
+            const filterSelect = document.getElementById('filter-bank');
+            
+            select.innerHTML = '';
+            if (filterSelect) filterSelect.innerHTML = '<option value="">🏦 所有帳戶</option>';
+
+            banks.forEach(bank => {
+                const opt = document.createElement('option');
+                opt.value = bank;
+                opt.innerText = '🏦 ' + bank;
+                select.appendChild(opt);
+
+                if (filterSelect) {
+                    const filterOpt = document.createElement('option');
+                    filterOpt.value = bank;
+                    filterOpt.innerText = '🏦 ' + bank;
+                    filterSelect.appendChild(filterOpt);
+                }
+            });
+        }
+
+        function openSettingsModal() {
+            renderBankSettings();
+            document.getElementById('settings-modal').classList.remove('hidden');
+        }
+
+        function closeSettingsModal(event, force = false) {
+            if (force || event.target.id === 'settings-modal') {
+                document.getElementById('settings-modal').classList.add('hidden');
+                // 關閉時儲存並更新下拉選單
+                localStorage.setItem('tiger_banks', JSON.stringify(banks));
+                updateBankSelect();
+            }
+        }
+
+        function renderBankSettings() {
+            const list = document.getElementById('bank-list-setting');
+            list.innerHTML = '';
+            banks.forEach((bank, index) => {
+                const li = document.createElement('li');
+                li.className = 'flex justify-between items-center bg-white border border-morandi-light px-4 py-3 rounded-xl text-sm shadow-sm';
+                li.innerHTML = `
+                    <span class="font-medium text-morandi-text"><i class="fa-solid fa-building-columns mr-2 text-gray-300"></i>${bank}</span>
+                    <button onclick="removeBank(${index})" class="text-red-400 hover:text-red-600 bg-red-50 w-8 h-8 rounded-full flex items-center justify-center"><i class="fa-solid fa-trash-can"></i></button>
+                `;
+                list.appendChild(li);
+            });
+        }
+
+        function addBank() {
+            const input = document.getElementById('new-bank-name');
+            const name = input.value.trim();
+            if (name && !banks.includes(name)) {
+                banks.push(name);
+                input.value = '';
+                renderBankSettings();
+            }
+        }
+
+        function removeBank(index) {
+            banks.splice(index, 1);
+            renderBankSettings();
+        }
+
+        // --- 圖片查看與提示訊息 ---
+        function viewImage(base64Str) {
+            document.getElementById('full-image').src = base64Str;
+            document.getElementById('image-modal').classList.remove('hidden');
+        }
+
+        function closeImageModal() {
+            document.getElementById('image-modal').classList.add('hidden');
+            document.getElementById('full-image').src = '';
+        }
+
+        function showMessage(msg) {
+            // 避免重複堆疊
+            const existToast = document.getElementById('toast-msg');
+            if(existToast) existToast.remove();
+
+            const toast = document.createElement('div');
+            toast.id = 'toast-msg';
+            toast.className = 'fixed top-[10%] left-1/2 -translate-x-1/2 bg-gray-800/90 text-white px-6 py-3 rounded-full shadow-lg z-[60] text-sm transition-all duration-300 transform scale-95 opacity-0 backdrop-blur-sm';
+            toast.innerText = msg;
+            document.body.appendChild(toast);
+            
+            // 進入動畫
+            setTimeout(() => {
+                toast.classList.remove('scale-95', 'opacity-0');
+                toast.classList.add('scale-100', 'opacity-100');
+            }, 10);
+
+            // 離開動畫
+            setTimeout(() => {
+                toast.classList.remove('scale-100', 'opacity-100');
+                toast.classList.add('scale-95', 'opacity-0');
+                setTimeout(() => toast.remove(), 300);
+            }, 2000);
+        }
+    </script>
+</body>
+</html>
